@@ -154,7 +154,7 @@ def oauth_callback():
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
     # Use session-saved redirect, fallback to dashboard
-    next_url = session.pop('oauth_next', None) or "https://stochify.com/dashboard.html"
+    next_url = session.pop('oauth_next', None) or "https://stochify.com/dashboard"
 
     # Append token properly whether next_url already has query params or not
     sep = "&" if "?" in next_url else "?"
