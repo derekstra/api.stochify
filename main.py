@@ -12,6 +12,7 @@ import jwt
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.github import make_github_blueprint, github  # <- optional GitHub OAuth
 from ai_response import ai_bp
+from urllib.parse import quote
 
 
 # =========================================
@@ -205,15 +206,10 @@ def login_with_redirect():
     if not next_url.startswith("/"):
         next_url = "/dashboard"
 
-    # Build callback that carries next param
-    callback_with_next = f"https://api.stochify.com/oauth_callback?next={next_url}"
+    encoded_next = urllib.parse.quote(next_url, safe="")
+    callback_with_next = f"https://api.stochify.com/oauth_callback?next={encoded_next}"
 
-    # Override redirect_url for this request
-    # NOTE: This mutates a global; in low/medium traffic it’s fine.
-    # If you expect very high concurrency, prefer storing `next_url`
-    # in session and keeping a static redirect.
     google_bp.redirect_url = callback_with_next
-
     return redirect(url_for("google.login"))
 
 # ---- Authenticated user info (unchanged) ----
