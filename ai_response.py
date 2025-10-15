@@ -69,8 +69,7 @@ def ai_response():
 
                 project_context = (
                     f"Project Title: {title}\n"
-                    f"Created At: {created_str}\n\n"
-                    f"Project Content (truncated):\n{content}\n"
+                    f"Context:\n{content}\n"
                 )
             else:
                 print(f"⚠️ No project found for ID {project_id}; proceeding without DB context.")
@@ -89,8 +88,8 @@ def ai_response():
         groq_req = {
             "model": "llama-3.3-70b-versatile",  # supported & fast
             "messages": [{"role": "user", "content": full_prompt}],
-            "temperature": 0.7,
-            "max_tokens": 700,
+            "temperature": 0.3,
+            "max_tokens": 300,
         }
 
         resp = requests.post(
