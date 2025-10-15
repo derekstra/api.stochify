@@ -18,7 +18,7 @@ from flask_dance.contrib.github import make_github_blueprint, github  # <- optio
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
 CORS(app, resources={
-    r"/api/*": {
+    r"/*": {  # covers ALL routes, not just /api/*
         "origins": [
             "https://stochify.com",
             "https://www.stochify.com",
