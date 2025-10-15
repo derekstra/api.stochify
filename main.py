@@ -363,25 +363,32 @@ def register_user():
 
 @app.route("/api/projects", methods=["POST"])
 def create_project():
-    """Accept uploaded CSV/JSON file + project title, store as a Card."""
+    """Accept uploaded CSV/JSON text OR uploaded file, store as a Card."""
     email, error, code = get_current_user()
     if not email:
         return error, code
 
-    # ---- Parse form fields ----
-    title = request.form.get("title")
-    uploaded_file = request.files.get("file")
+    # Check content type to handle both JSON and multipart/form-data
+    if request.content_type.startswith("application/json"):
+        data = request.get_json(silent=True) or {}
+        title = data.get("title")
+        content = data.get("content")
+    else:
+        title = request.form.get("title")
+        uploaded_file = request.files.get("file")
+        content = None
+        if uploaded_file:
+            try:
+                content = uploaded_file.read().decode("utf-8")
+            except UnicodeDecodeError:
+                return jsonify({"error": "File must be UTF-8 encoded"}), 400
 
-    if not title or not uploaded_file:
-        return jsonify({"error": "Missing title or file"}), 400
+    if not title:
+        return jsonify({"error": "Missing project title"}), 400
+    if not content:
+        return jsonify({"error": "Missing content or file"}), 400
 
-    # ---- Read and decode file ----
-    try:
-        content = uploaded_file.read().decode("utf-8")
-    except UnicodeDecodeError:
-        return jsonify({"error": "File must be UTF-8 encoded"}), 400
-
-    # ---- Save as Card entry ----
+    # ---- Save as Card ----
     new_card = Card(email=email, title=title, content=content)
     db.session.add(new_card)
     db.session.commit()
