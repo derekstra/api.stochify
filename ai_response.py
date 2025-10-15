@@ -79,9 +79,10 @@ def ai_response():
             "Context:\n"
             f"{project_context}\n\n"
             "Instruction:\n"
-            "Analyze the context and answer the question accurately and concisely. "
-            "Provide a short, correct explanation, stating the answer clearly without extra commentary. "
-            "If no valid question is detected, politely encourage the user to ask a specific question "
+            "Analyze the context and answer the question accurately, clearly, and in a friendly tone. "
+            "Your reply should be concise, correct, and easy to understand — like you're helping a user directly. "
+            "Always maintain a polite, encouraging, and conversational style while staying factual. "
+            "If no valid question is detected, kindly encourage the user to ask a clear question "
             "related to the provided data or context.\n\n"
             f"Question:\n{prompt}"
         )
