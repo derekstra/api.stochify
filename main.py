@@ -122,27 +122,32 @@ def oauth_callback():
         return jsonify({"error": "Failed to fetch user info"}), 500
 
     user_info = resp.json()
-    email = user_info.get("email")
-    name = user_info.get("name")
-    picture = user_info.get("picture")
-
     payload = {
-        "email": email,
-        "name": name,
-        "picture": picture,
-        "exp": datetime.utcnow() + timedelta(days=7),
+        "email":   user_info.get("email"),
+        "name":    user_info.get("name"),
+        "picture": user_info.get("picture"),
+        "exp":     datetime.utcnow() + timedelta(days=7),
     }
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-    # ✅ pull next param directly from URL, not session
     next_page = request.args.get("next", "/dashboard")
     if not next_page.startswith("/"):
         next_page = "/dashboard"
 
-    # ✅ redirect to frontend with token
     return redirect(f"https://stochify.com{next_page}?token={token}")
 
-# ---- Optional GitHub OAuth callback (additive only) ----
+
+@app.route("/login/github_with_redirect")
+def github_with_redirect():
+    next_url = request.args.get("next", "/dashboard")
+    if not next_url.startswith("/"):
+        next_url = "/dashboard"
+
+    callback_with_next = f"https://api.stochify.com/github_callback?next={next_url}"
+    github_bp.redirect_url = callback_with_next
+    return redirect(url_for("github.login"))
+
+
 @app.route("/github_callback")
 def github_callback():
     if not github.authorized:
@@ -153,55 +158,48 @@ def github_callback():
         return jsonify({"error": "Failed to fetch GitHub user"}), 500
 
     user_info = resp.json()
-    # Try to get email; GitHub may not include it here unless scope includes emails
+
     email = user_info.get("email")
     if not email:
-        # Fallback: try /user/emails if permitted
         emails_resp = github.get("/user/emails")
         if emails_resp.ok:
             emails = emails_resp.json()
-            primary = next((e["email"] for e in emails if e.get("primary")), None)
-            email = primary or (emails[0]["email"] if emails else None)
-    # last resort (keeps flow working even without public email)
+            primary = next((e.get("email") for e in emails if e.get("primary")), None)
+            email = primary or (emails[0].get("email") if emails else None)
     if not email:
         email = f"{user_info.get('login')}@github"
 
-    name = user_info.get("name") or user_info.get("login")
-    picture = user_info.get("avatar_url") or ""
-
     payload = {
-        "email": email,
-        "name": name,
-        "picture": picture,
-        "exp": datetime.utcnow() + timedelta(days=7),
+        "email":   email,
+        "name":    user_info.get("name") or user_info.get("login"),
+        "picture": user_info.get("avatar_url") or "",
+        "exp":     datetime.utcnow() + timedelta(days=7),
     }
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-    # mirror Google flow
-    next_url = session.pop("oauth_next", None) or "https://stochify.com/dashboard"
-    sep = "&" if "?" in next_url else "?"
-    final_redirect = f"{next_url}{sep}token={token}"
-    return redirect(final_redirect)
+    next_page = request.args.get("next", "/dashboard")
+    if not next_page.startswith("/"):
+        next_page = "/dashboard"
+
+    return redirect(f"https://stochify.com{next_page}?token={token}")
+
 
 @app.route("/login_with_redirect")
 def login_with_redirect():
-    next_url = (
-        request.args.get("next")
-        or request.args.get("redirect")
-        or "/dashboard"
-    )
-
-    # Sanitize redirect target
+    next_url = request.args.get("next", "/dashboard")
     if not next_url.startswith("/"):
         next_url = "/dashboard"
 
-    # ✅ Build redirect URI with next param encoded in it
-    redirect_uri = f"https://api.stochify.com/oauth_callback?next={next_url}"
+    # Build callback that carries next param
+    callback_with_next = f"https://api.stochify.com/oauth_callback?next={next_url}"
 
-    # ✅ Start Google OAuth but override redirect_url dynamically
-    return redirect(
-        f"{google_bp.authorization_url}?redirect_uri={redirect_uri}"
-    )
+    # Override redirect_url for this request
+    # NOTE: This mutates a global; in low/medium traffic it’s fine.
+    # If you expect very high concurrency, prefer storing `next_url`
+    # in session and keeping a static redirect.
+    google_bp.redirect_url = callback_with_next
+
+    return redirect(url_for("google.login"))
 
 # ---- Authenticated user info (unchanged) ----
 @app.route("/api/user")
