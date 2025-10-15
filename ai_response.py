@@ -86,7 +86,7 @@ def ai_response():
 
         # ---------- Call Groq ----------
         groq_req = {
-            "model": "mixtral-8x7b-32768",  # supported & fast
+            "model": "llama-3.3-70b-versatile",  # supported & fast
             "messages": [{"role": "user", "content": full_prompt}],
             "temperature": 0.7,
             "max_tokens": 700,
