@@ -17,7 +17,18 @@ from flask_dance.contrib.github import make_github_blueprint, github  # <- optio
 # =========================================
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
-CORS(app, supports_credentials=True)
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "https://stochify.com",
+            "https://www.stochify.com",
+            "http://localhost:5173"
+        ],
+        "supports_credentials": True,
+        "allow_headers": ["Content-Type", "Authorization"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    }
+})
 
 # JWT secret
 JWT_SECRET = os.environ.get("JWT_SECRET", "jwt-secret-key")
