@@ -77,11 +77,12 @@ def ai_response():
 
         # ---------- Compose final prompt ----------
         full_prompt = (
-            "You are Stochify, an AI data analyst. "
-            "Interpret datasets and projects with clear, concise, math-savvy explanations. "
-            "If relevant, list quick bullet insights.\n\n"
-            f"{project_context}"
-            f"User Question:\n{prompt}"
+            "Context:\n"
+            f"{project_context}\n\n"
+            "Instruction:\n"
+            "Analyze the context and answer the question accurately and concisely. "
+            "Provide a short, correct explanation, stating the answer clearly without extra commentary.\n\n"
+            f"Question:\n{prompt}"
         )
 
         # ---------- Call Groq ----------
