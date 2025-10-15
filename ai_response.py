@@ -98,7 +98,7 @@ def ai_response():
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.2-70b-versatile",
+                "model": "mixtral-8x7b-32768",
                 "messages": [{"role": "user", "content": full_prompt}],
                 "temperature": 0.7,
                 "max_tokens": 600,
