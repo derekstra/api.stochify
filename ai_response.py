@@ -17,21 +17,30 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")  # Render or local PostgreSQL
 
 # =====================================================
-# 🔹 Helper: Fetch Project Content
+# 🔹 Helper: Fetch Project from Cards Table
 # =====================================================
-def get_project_content(project_id):
-    """Fetch project content from PostgreSQL cards table."""
+def fetch_card_by_id(card_id):
+    """Fetch a project card (title + content) by its ID from PostgreSQL."""
+    conn = None
+    project = None
     try:
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT title, content FROM cards WHERE id = %s;", (project_id,))
-        project = cur.fetchone()
-        cur.close()
-        conn.close()
-        return project
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, email, title, content, created_at, updated_at
+                FROM cards
+                WHERE id = %s;
+                """,
+                (card_id,),
+            )
+            project = cur.fetchone()
     except Exception as e:
-        print("DB error:", e)
-        return None
+        print("❌ Database error in fetch_card_by_id:", e)
+    finally:
+        if conn:
+            conn.close()
+    return project
 
 # =====================================================
 # 🔹 POST /airesponse
@@ -39,40 +48,48 @@ def get_project_content(project_id):
 @ai_bp.route("/airesponse", methods=["POST"])
 def ai_response():
     """
-    Takes JSON:
-        { "prompt": "Explain the data", "project_id": "123" }
+    Expects JSON:
+        { "prompt": "Explain the dataset", "project_id": "94" }
 
     Returns JSON:
         { "reply": "The dataset shows..." }
     """
     try:
-        data = request.get_json()
-        prompt = data.get("prompt", "").strip()
+        data = request.get_json(force=True)
+        prompt = (data.get("prompt") or "").strip()
         project_id = data.get("project_id")
 
         if not prompt:
             return jsonify({"error": "Missing prompt"}), 400
 
-        # Optionally retrieve file content
+        # =====================================================
+        # 🔹 Get Project Context (same as /api/cards/:id)
+        # =====================================================
         project_context = ""
         if project_id:
-            project = get_project_content(project_id)
-            if project:
+            card = fetch_card_by_id(project_id)
+            if card:
                 project_context = (
-                    f"Project Title: {project['title']}\n\n"
-                    f"Project Content:\n{project['content'][:3000]}"  # limit context size
+                    f"Project Title: {card['title']}\n"
+                    f"Created At: {card['created_at']}\n\n"
+                    f"Project Content (truncated):\n{(card['content'] or '')[:3000]}"
                 )
+            else:
+                print(f"⚠️ No project found for ID {project_id}")
 
-        # Combine context with user question
+        # =====================================================
+        # 🔹 Build Full Prompt
+        # =====================================================
         full_prompt = (
-            f"You are Stochify, an AI analyst helping the user understand data projects.\n\n"
+            "You are Stochify, an AI data analyst. "
+            "You help users interpret datasets and projects. "
+            "Provide step-by-step reasoning and clear insights.\n\n"
             f"{project_context}\n\n"
-            f"User Question:\n{prompt}\n\n"
-            f"Answer clearly, concisely, and use math/analytics reasoning where possible."
+            f"User Question:\n{prompt}"
         )
 
         # =====================================================
-        # 🔹 Call Groq API
+        # 🔹 Call Groq API (LLama-3.2)
         # =====================================================
         response = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
@@ -86,15 +103,24 @@ def ai_response():
                 "temperature": 0.7,
                 "max_tokens": 600,
             },
+            timeout=60,
         )
 
+        # Handle non-200 Groq responses
         if response.status_code != 200:
-            print("Groq error:", response.text)
-            return jsonify({"error": "AI request failed"}), 500
+            print("❌ Groq error:", response.text)
+            return jsonify({"error": "Groq API request failed"}), 500
 
-        reply = response.json()["choices"][0]["message"]["content"].strip()
+        groq_json = response.json()
+        if "choices" not in groq_json:
+            print("❌ Unexpected Groq response:", groq_json)
+            return jsonify({"error": "Unexpected AI response"}), 500
+
+        reply = groq_json["choices"][0]["message"]["content"].strip()
         return jsonify({"reply": reply})
 
     except Exception as e:
-        print("Server error:", e)
-        return jsonify({"error": "Internal server error"}), 500
+        import traceback
+        print("❌ Server error in /airesponse:", e)
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
