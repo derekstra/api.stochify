@@ -11,11 +11,14 @@ import jwt
 # OAuth blueprints
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.github import make_github_blueprint, github  # <- optional GitHub OAuth
+from ai_response import ai_bp
+
 
 # =========================================
 # App & Config
 # =========================================
 app = Flask(__name__)
+app.register_blueprint(ai_bp)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
 CORS(app, resources={
     r"/*": {
