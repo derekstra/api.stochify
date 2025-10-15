@@ -5,122 +5,117 @@ import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-# =====================================================
-# 🔹 Setup Blueprint
-# =====================================================
 ai_bp = Blueprint("ai", __name__)
 
-# =====================================================
-# 🔹 Load Environment Variables
-# =====================================================
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-DATABASE_URL = os.getenv("DATABASE_URL")  # Render or local PostgreSQL
+# === Env ===
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-# =====================================================
-# 🔹 Helper: Fetch Project from Cards Table
-# =====================================================
-def fetch_card_by_id(card_id):
-    """Fetch a project card (title + content) by its ID from PostgreSQL."""
-    conn = None
-    project = None
+# Normalize postgres URI if needed (Render sometimes gives postgres://)
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# ---------- DB helper ----------
+def get_project_content(card_id: int):
+    """
+    Fetch project content from the *card* table (singular),
+    matching your SQLAlchemy model `class Card(db.Model)`.
+    """
     try:
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # NOTE: table is `card` (singular), not `cards`
             cur.execute(
                 """
-                SELECT id, email, title, content, created_at, updated_at
-                FROM cards
+                SELECT id, title, content, created_at
+                FROM card
                 WHERE id = %s;
                 """,
                 (card_id,),
             )
-            project = cur.fetchone()
+            row = cur.fetchone()
+        conn.close()
+        return row
     except Exception as e:
-        print("❌ Database error in fetch_card_by_id:", e)
-    finally:
-        if conn:
-            conn.close()
-    return project
+        print("❌ DB error in get_project_content:", e)
+        return None
 
-# =====================================================
-# 🔹 POST /airesponse
-# =====================================================
 @ai_bp.route("/airesponse", methods=["POST"])
 def ai_response():
     """
     Expects JSON:
-        { "prompt": "Explain the dataset", "project_id": "94" }
+      { "prompt": "...", "project_id": 94 }
 
-    Returns JSON:
-        { "reply": "The dataset shows..." }
+    Returns:
+      { "reply": "..." }
     """
     try:
-        data = request.get_json(force=True)
+        data = request.get_json(force=True) or {}
         prompt = (data.get("prompt") or "").strip()
         project_id = data.get("project_id")
 
         if not prompt:
             return jsonify({"error": "Missing prompt"}), 400
 
-        # =====================================================
-        # 🔹 Get Project Context (same as /api/cards/:id)
-        # =====================================================
+        # ---------- Build context from DB (if provided) ----------
         project_context = ""
-        if project_id:
-            card = fetch_card_by_id(project_id)
-            if card:
+        if project_id is not None:
+            project = get_project_content(project_id)
+            if project:
+                title = project.get("title") or "Untitled"
+                created_at = project.get("created_at")
+                created_str = str(created_at) if created_at is not None else "N/A"
+                content = (project.get("content") or "")[:3000]  # keep prompt tight
+
                 project_context = (
-                    f"Project Title: {card['title']}\n"
-                    f"Created At: {card['created_at']}\n\n"
-                    f"Project Content (truncated):\n{(card['content'] or '')[:3000]}"
+                    f"Project Title: {title}\n"
+                    f"Created At: {created_str}\n\n"
+                    f"Project Content (truncated):\n{content}\n"
                 )
             else:
-                print(f"⚠️ No project found for ID {project_id}")
+                print(f"⚠️ No project found for ID {project_id}; proceeding without DB context.")
 
-        # =====================================================
-        # 🔹 Build Full Prompt
-        # =====================================================
+        # ---------- Compose final prompt ----------
         full_prompt = (
             "You are Stochify, an AI data analyst. "
-            "You help users interpret datasets and projects. "
-            "Provide step-by-step reasoning and clear insights.\n\n"
-            f"{project_context}\n\n"
+            "Interpret datasets and projects with clear, concise, math-savvy explanations. "
+            "If relevant, list quick bullet insights.\n\n"
+            f"{project_context}"
             f"User Question:\n{prompt}"
         )
 
-        # =====================================================
-        # 🔹 Call Groq API (LLama-3.2)
-        # =====================================================
-        response = requests.post(
+        # ---------- Call Groq ----------
+        groq_req = {
+            "model": "mixtral-8x7b-32768",  # supported & fast
+            "messages": [{"role": "user", "content": full_prompt}],
+            "temperature": 0.7,
+            "max_tokens": 700,
+        }
+
+        resp = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {GROQ_API_KEY}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": "mixtral-8x7b-32768",
-                "messages": [{"role": "user", "content": full_prompt}],
-                "temperature": 0.7,
-                "max_tokens": 600,
-            },
+            json=groq_req,
             timeout=60,
         )
 
-        # Handle non-200 Groq responses
-        if response.status_code != 200:
-            print("❌ Groq error:", response.text)
+        if resp.status_code != 200:
+            print("❌ Groq error:", resp.text)
             return jsonify({"error": "Groq API request failed"}), 500
 
-        groq_json = response.json()
-        if "choices" not in groq_json:
-            print("❌ Unexpected Groq response:", groq_json)
+        j = resp.json()
+        if "choices" not in j or not j["choices"]:
+            print("❌ Unexpected Groq response:", j)
             return jsonify({"error": "Unexpected AI response"}), 500
 
-        reply = groq_json["choices"][0]["message"]["content"].strip()
+        reply = (j["choices"][0]["message"]["content"] or "").strip()
         return jsonify({"reply": reply})
 
     except Exception as e:
         import traceback
         print("❌ Server error in /airesponse:", e)
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal server error"}), 500
