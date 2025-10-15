@@ -134,12 +134,23 @@ def oauth_callback():
     }
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-    # Use session-saved redirect, fallback to dashboard
-    next_url = session.pop("oauth_next", None) or "https://stochify.com/dashboard"
+    # ✅ Respect frontend "next" or session redirect
+    next_url = (
+        session.pop("oauth_next", None)
+        or request.args.get("next")
+        or "https://stochify.com/dashboard"
+    )
+
+    # ✅ Ensure it's safe and points to Stochify
+    if not is_safe_redirect_url(next_url):
+        next_url = "https://stochify.com/dashboard"
+
+    # ✅ Append token
     sep = "&" if "?" in next_url else "?"
     final_redirect = f"{next_url}{sep}token={token}"
 
     return redirect(final_redirect)
+
 
 # ---- Optional GitHub OAuth callback (additive only) ----
 @app.route("/github_callback")
@@ -182,22 +193,29 @@ def github_callback():
     final_redirect = f"{next_url}{sep}token={token}"
     return redirect(final_redirect)
 
-# ---- Login with redirect helper (unchanged) ----
 @app.route("/login_with_redirect")
 def login_with_redirect():
-    # Accept either 'next' or 'redirect' for compatibility
-    next_url = request.args.get("next") or request.args.get("redirect") or request.referrer or "/"
-    # Make it absolute if it's relative
+    next_url = (
+        request.args.get("next")
+        or request.args.get("redirect")
+        or request.referrer
+        or "/dashboard"
+    )
+
+    # Normalize to absolute frontend URL
     if not urlparse(next_url).scheme:
         next_url = f"https://stochify.com{next_url}" if next_url.startswith("/") else f"https://stochify.com/{next_url}"
 
-    # Security: allow only safe redirect targets
+    # Security check
     if not is_safe_redirect_url(next_url):
-        next_url = "https://stochify.com/dashboard.html"
+        next_url = "https://stochify.com/dashboard"
 
-    # Save target in server-side session and start OAuth flow
+    # Save next URL in session for OAuth callback
     session["oauth_next"] = next_url
+
+    # Start Google login flow
     return redirect(url_for("google.login"))
+
 
 # ---- Authenticated user info (unchanged) ----
 @app.route("/api/user")
