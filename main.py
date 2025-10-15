@@ -134,23 +134,13 @@ def oauth_callback():
     }
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-    # ✅ Respect frontend "next" or session redirect
-    next_url = (
-        session.pop("oauth_next", None)
-        or request.args.get("next")
-        or "https://stochify.com/dashboard"
-    )
+    # ✅ pull next param directly from URL, not session
+    next_page = request.args.get("next", "/dashboard")
+    if not next_page.startswith("/"):
+        next_page = "/dashboard"
 
-    # ✅ Ensure it's safe and points to Stochify
-    if not is_safe_redirect_url(next_url):
-        next_url = "https://stochify.com/dashboard"
-
-    # ✅ Append token
-    sep = "&" if "?" in next_url else "?"
-    final_redirect = f"{next_url}{sep}token={token}"
-
-    return redirect(final_redirect)
-
+    # ✅ redirect to frontend with token
+    return redirect(f"https://stochify.com{next_page}?token={token}")
 
 # ---- Optional GitHub OAuth callback (additive only) ----
 @app.route("/github_callback")
@@ -198,24 +188,20 @@ def login_with_redirect():
     next_url = (
         request.args.get("next")
         or request.args.get("redirect")
-        or request.referrer
         or "/dashboard"
     )
 
-    # Normalize to absolute frontend URL
-    if not urlparse(next_url).scheme:
-        next_url = f"https://stochify.com{next_url}" if next_url.startswith("/") else f"https://stochify.com/{next_url}"
+    # Sanitize redirect target
+    if not next_url.startswith("/"):
+        next_url = "/dashboard"
 
-    # Security check
-    if not is_safe_redirect_url(next_url):
-        next_url = "https://stochify.com/dashboard"
+    # ✅ Build redirect URI with next param encoded in it
+    redirect_uri = f"https://api.stochify.com/oauth_callback?next={next_url}"
 
-    # Save next URL in session for OAuth callback
-    session["oauth_next"] = next_url
-
-    # Start Google login flow
-    return redirect(url_for("google.login"))
-
+    # ✅ Start Google OAuth but override redirect_url dynamically
+    return redirect(
+        f"{google_bp.authorization_url}?redirect_uri={redirect_uri}"
+    )
 
 # ---- Authenticated user info (unchanged) ----
 @app.route("/api/user")
