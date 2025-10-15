@@ -80,6 +80,7 @@ github_bp = make_github_blueprint(
     client_secret=os.environ.get("GITHUB_CLIENT_SECRET"),
     redirect_url="/github_callback",
 )
+github_bp.authorization_url_params["prompt"] = "login"
 app.register_blueprint(github_bp, url_prefix="/login")
 
 # =========================================
