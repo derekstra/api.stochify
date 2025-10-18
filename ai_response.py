@@ -71,15 +71,16 @@ def call_groq(full_prompt, temperature, max_words=300):
         return "Error calling Groq."
 
 
-def call_gemini(full_prompt, temperature, max_words=300):
+def call_gemini(full_prompt, temperature, max_words):
     """Send a chat request to Google Gemini (AI Studio v1beta)."""
     try:
         if not GEMINI_API_KEY:
             return "Gemini API key missing."
 
+        # ✅ Correct endpoint
         gemini_url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+            f"gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
         )
 
         gemini_payload = {
@@ -113,6 +114,7 @@ def call_gemini(full_prompt, temperature, max_words=300):
     except Exception as e:
         print("❌ Exception in call_gemini:", e)
         return "Error calling Gemini."
+
 
 
 # ---------- Main Route ----------
