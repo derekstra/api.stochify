@@ -74,6 +74,14 @@ def call_groq(full_prompt, temperature, max_words):
 def call_gemini(full_prompt, temperature, max_words):
     """Send a chat request to Google Gemini."""
     try:
+        if not GEMINI_API_KEY:
+            return "Gemini API key missing."
+
+        gemini_url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+            f"?key={GEMINI_API_KEY}"
+        )
+
         gemini_payload = {
             "contents": [{"parts": [{"text": full_prompt}]}],
             "generationConfig": {
@@ -83,18 +91,15 @@ def call_gemini(full_prompt, temperature, max_words):
         }
 
         resp = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
-            headers={
-                "Authorization": f"Bearer {GEMINI_API_KEY}",
-                "Content-Type": "application/json",
-            },
+            gemini_url,
+            headers={"Content-Type": "application/json"},
             json=gemini_payload,
             timeout=60,
         )
 
         if resp.status_code != 200:
             print("❌ Gemini API error:", resp.text)
-            return "Gemini API request failed."
+            return f"Gemini API request failed ({resp.status_code})."
 
         j = resp.json()
         return (
