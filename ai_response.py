@@ -39,14 +39,14 @@ def get_project_content(card_id: int):
 
 # ---------- Model Handlers ----------
 
-def call_groq(full_prompt, temperature, max_words):
+def call_groq(full_prompt, temperature, max_words=300):
     """Send a chat request to Groq."""
     try:
         groq_payload = {
             "model": "llama-3.3-70b-versatile",
             "messages": [{"role": "user", "content": full_prompt}],
             "temperature": temperature,
-            "max_tokens": max_words * 2,
+            "max_tokens": max_words * 2,  # safe fixed limit
         }
 
         resp = requests.post(
@@ -71,7 +71,7 @@ def call_groq(full_prompt, temperature, max_words):
         return "Error calling Groq."
 
 
-def call_gemini(full_prompt, temperature, max_words):
+def call_gemini(full_prompt, temperature, max_words=300):
     """Send a chat request to Google Gemini (AI Studio v1beta)."""
     try:
         if not GEMINI_API_KEY:
@@ -114,6 +114,7 @@ def call_gemini(full_prompt, temperature, max_words):
         print("❌ Exception in call_gemini:", e)
         return "Error calling Gemini."
 
+
 # ---------- Main Route ----------
 
 @ai_bp.route("/airesponse", methods=["POST"])
@@ -124,8 +125,7 @@ def ai_response():
         "prompt": "...",
         "project_id": 94,
         "model": "groq" or "gemini",
-        "temperature": 0.5,
-        "max_words": 300
+        "temperature": 0.5
       }
     """
     try:
@@ -138,7 +138,7 @@ def ai_response():
         project_id = data.get("project_id")
         model_choice = (data.get("model") or "groq").lower()
         temperature = float(data.get("temperature", 0.3))
-        max_words = int(data.get("max_words", 300))
+        max_words = 300  # ✅ fixed predefined max length
 
         # ---------- Build context ----------
         project_context = ""
