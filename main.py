@@ -313,15 +313,28 @@ def get_card(card_id):
     if not card:
         return jsonify({"error": "Card not found"}), 404
 
-    return jsonify(
-        {
-            "id": card.id,
-            "title": card.title,
-            "content": card.content,
-            "created_at": card.created_at.isoformat(),
-            "updated_at": card.updated_at.isoformat(),
+    asset = Asset.query.filter_by(card_id=card.id).order_by(Asset.created_at.desc()).first()
+
+    card_json = {
+        "id": card.id,
+        "title": card.title,
+        "content": card.content,
+        "created_at": card.created_at.isoformat(),
+        "updated_at": card.updated_at.isoformat(),
+    }
+
+    if asset:
+        card_json["asset"] = {
+            "id": asset.id,
+            "card_id": asset.card_id,
+            "file_name": asset.file_name,
+            "mime_type": asset.mime_type,
+            "size_bytes": asset.size_bytes,
+            "encoding": asset.encoding,
         }
-    )
+
+    return jsonify(card_json)
+
 
 @app.route("/api/cards/<int:card_id>", methods=["PUT"])
 def update_card(card_id):
