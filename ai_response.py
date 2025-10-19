@@ -70,39 +70,49 @@ def call_groq(full_prompt, temperature, max_words=300):
         print("❌ Exception in call_groq:", e)
         return "Error calling Groq."
 
-
-def call_gemini(full_prompt, temperature, max_words):
-    """Send a chat request to Google Gemini (AI Studio v1beta)."""
+def call_gemini(full_prompt, temperature=0.3, max_words=300):
+    """Send a chat request to Gemini 2.5 Pro (Google AI Studio v1beta)."""
     try:
         if not GEMINI_API_KEY:
             return "Gemini API key missing."
 
-        # ✅ Correct endpoint
+        # === Correct model & endpoint ===
         gemini_url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+            f"gemini-2.5-pro:generateContent?key={GEMINI_API_KEY}"
         )
 
-        gemini_payload = {
-            "contents": [{"parts": [{"text": full_prompt}]}],
+        # === Request payload ===
+        payload = {
+            "contents": [
+                {
+                    "parts": [{"text": full_prompt}]
+                }
+            ],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_words * 2,
+                "maxOutputTokens": max_words * 2,  # Safe limit
+                "topP": 0.95,
+                "topK": 64,
             },
         }
 
+        # === Send request ===
         resp = requests.post(
             gemini_url,
             headers={"Content-Type": "application/json"},
-            json=gemini_payload,
+            json=payload,
             timeout=60,
         )
 
+        # === Error handling ===
         if resp.status_code != 200:
             print("❌ Gemini API error:", resp.status_code, resp.text)
             return f"Gemini API request failed ({resp.status_code})."
 
         j = resp.json()
+
+        # === Extract model reply ===
         return (
             j.get("candidates", [{}])[0]
             .get("content", {})
@@ -113,10 +123,8 @@ def call_gemini(full_prompt, temperature, max_words):
 
     except Exception as e:
         print("❌ Exception in call_gemini:", e)
-        return "Error calling Gemini."
-
-
-
+        return "Error calling Gemini 2.5 Pro."
+    
 # ---------- Main Route ----------
 
 @ai_bp.route("/airesponse", methods=["POST"])
