@@ -1,24 +1,26 @@
 import os
+import io
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
+from mimetypes import guess_type
 
-from flask import Flask, redirect, url_for, jsonify, request, session
+import jwt
+import pandas as pd
+from charset_normalizer import from_bytes as detect_encoding
+from flask import (
+    Flask, redirect, url_for, jsonify, request, session, send_file
+)
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
-import jwt
 
-# OAuth blueprints
+# OAuth Blueprints
 from flask_dance.contrib.google import make_google_blueprint, google
-from flask_dance.contrib.github import make_github_blueprint, github  # <- optional GitHub OAuth
+from flask_dance.contrib.github import make_github_blueprint, github  # Optional: GitHub OAuth
+
+# Local Blueprints
 from ai_response import ai_bp
-from urllib.parse import quote
 
-from mimetypes import guess_type
-from charset_normalizer import from_bytes as detect_encoding  # already in your env via requests deps
-
-from flask import send_file
-from io import BytesIO
 
 ALLOWED_TEXT_EXT = {'.csv', '.json', '.txt'}
 ALLOWED_EXCEL_EXT = {'.xlsx', '.xls'}
@@ -495,11 +497,36 @@ def create_project():
         size_bytes=size_bytes
     )
 
+    # ---- Store text and/or binary versions ----
     if text_payload is not None:
+        # ✅ Text-based files (CSV, JSON, TXT)
         asset.text_content = text_payload
-    else:
-        # binary (e.g., excel)
+
+        # Keep binary too (optional safety copy)
+        asset.blob_content = text_payload.encode(encoding or "utf-8")
+
+    elif blob_bytes:
+        # ✅ Excel or other binary files
         asset.blob_content = blob_bytes
+
+        # Try to also create a readable text version for AI
+        try:
+            excel_buf = io.BytesIO(blob_bytes)
+            sheets = pd.read_excel(excel_buf, sheet_name=None)
+
+            text_parts = []
+            for sheet_name, df in sheets.items():
+                text_parts.append(f"--- Sheet: {sheet_name} ---\n")
+                text_parts.append(df.to_csv(index=False))
+                text_parts.append("\n\n")
+
+            text_version = "".join(text_parts)
+            asset.text_content = text_version
+            asset.encoding = "utf-8"
+            asset.size_bytes = len(text_version.encode("utf-8"))
+        except Exception as e:
+            # If conversion fails, just keep binary
+            print(f"Warning: could not extract text from Excel: {e}")
 
     db.session.add(asset)
     db.session.commit()

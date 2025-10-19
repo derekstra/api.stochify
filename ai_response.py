@@ -3,6 +3,8 @@ import os
 import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import io
+import pandas as pd
 
 ai_bp = Blueprint("ai", __name__)
 
@@ -11,30 +13,68 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-# Normalize postgres URI (Render sometimes gives postgres://)
+# Normalize Postgres URL
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # ---------- DB helper ----------
-def get_project_content(card_id: int):
-    """Fetch project content from the card table."""
+def get_project_text(card_id: int):
+    """
+    Fetches the text representation of a project.
+    - Prefers Asset.text_content
+    - If only blob_content exists (Excel), converts to CSV text using pandas
+    - Falls back to Card.content if neither found
+    """
     try:
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, title, content, created_at
-                FROM card
-                WHERE id = %s;
+                SELECT 
+                    c.title,
+                    c.content,
+                    a.text_content,
+                    a.blob_content,
+                    a.mime_type
+                FROM card c
+                LEFT JOIN asset a ON a.card_id = c.id
+                WHERE c.id = %s
+                ORDER BY a.created_at DESC
+                LIMIT 1;
                 """,
                 (card_id,),
             )
             row = cur.fetchone()
         conn.close()
-        return row
+
+        if not row:
+            return "No data found for this project."
+
+        # 1️⃣ Prefer stored text version
+        if row.get("text_content"):
+            return row["text_content"]
+
+        # 2️⃣ Otherwise, try to extract from Excel blob
+        if row.get("blob_content"):
+            try:
+                excel_bytes = io.BytesIO(row["blob_content"])
+                sheets = pd.read_excel(excel_bytes, sheet_name=None)
+                parts = []
+                for name, df in sheets.items():
+                    parts.append(f"--- Sheet: {name} ---\n")
+                    parts.append(df.to_csv(index=False))
+                    parts.append("\n\n")
+                return "".join(parts)
+            except Exception as e:
+                print("⚠️ Failed to extract Excel text:", e)
+                return "Unable to extract readable text from Excel file."
+
+        # 3️⃣ Fallback: old-style Card.content
+        return row.get("content") or "No text content available."
+
     except Exception as e:
-        print("❌ DB error in get_project_content:", e)
-        return None
+        print("❌ DB error in get_project_text:", e)
+        return "Error fetching project text."
 
 
 # ---------- Model Handlers ----------
@@ -46,7 +86,7 @@ def call_groq(full_prompt, temperature, max_words=300):
             "model": "llama-3.3-70b-versatile",
             "messages": [{"role": "user", "content": full_prompt}],
             "temperature": temperature,
-            "max_tokens": max_words * 2,  # safe fixed limit
+            "max_tokens": max_words * 2,
         }
 
         resp = requests.post(
@@ -64,40 +104,39 @@ def call_groq(full_prompt, temperature, max_words=300):
             return "Groq API request failed."
 
         j = resp.json()
-        return (j.get("choices", [{}])[0].get("message", {}).get("content", "") or "").strip()
+        return (
+            j.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
 
     except Exception as e:
         print("❌ Exception in call_groq:", e)
         return "Error calling Groq."
 
+
 def call_gemini(full_prompt, temperature=0.3, max_words=300):
-    """Send a chat request to Gemini 2.5 Flash-Lite (Google AI Studio v1beta)."""
+    """Send a chat request to Gemini 2.5 Flash-Lite."""
     try:
         if not GEMINI_API_KEY:
             return "Gemini API key missing."
 
-        # === Correct model & endpoint ===
         gemini_url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
             f"gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
         )
 
-        # === Request payload ===
         payload = {
-            "contents": [
-                {
-                    "parts": [{"text": full_prompt}]
-                }
-            ],
+            "contents": [{"parts": [{"text": full_prompt}]}],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_words * 2,  # Safe limit (~600 tokens)
+                "maxOutputTokens": max_words * 2,
                 "topP": 0.95,
                 "topK": 64,
             },
         }
 
-        # === Send request ===
         resp = requests.post(
             gemini_url,
             headers={"Content-Type": "application/json"},
@@ -105,14 +144,11 @@ def call_gemini(full_prompt, temperature=0.3, max_words=300):
             timeout=60,
         )
 
-        # === Error handling ===
         if resp.status_code != 200:
-            print("❌ Gemini Flash-Lite API error:", resp.status_code, resp.text)
-            return f"Gemini Flash-Lite API request failed ({resp.status_code})."
+            print("❌ Gemini API error:", resp.status_code, resp.text)
+            return f"Gemini API request failed ({resp.status_code})."
 
         j = resp.json()
-
-        # === Extract model reply ===
         text = (
             j.get("candidates", [{}])[0]
             .get("content", {})
@@ -121,17 +157,13 @@ def call_gemini(full_prompt, temperature=0.3, max_words=300):
             .strip()
         )
 
-        # === Fallback if empty (edge case)
-        if not text:
-            print("⚠️ Empty response from Gemini Flash-Lite:", j)
-            return "No response from Gemini Flash-Lite."
-
-        return text
+        return text or "No response from Gemini."
 
     except Exception as e:
-        print("❌ Exception in call_gemini Flash-Lite:", e)
-        return "Error calling Gemini 2.5 Flash-Lite."
-    
+        print("❌ Exception in call_gemini:", e)
+        return "Error calling Gemini."
+
+
 # ---------- Main Route ----------
 
 @ai_bp.route("/airesponse", methods=["POST"])
@@ -140,10 +172,11 @@ def ai_response():
     Expects JSON:
       {
         "prompt": "...",
-        "project_id": 94,
+        "project_id": 123,
         "model": "groq" or "gemini",
         "temperature": 0.5
       }
+    Combines user question with project text (from asset or content).
     """
     try:
         data = request.get_json(force=True) or {}
@@ -155,27 +188,22 @@ def ai_response():
         project_id = data.get("project_id")
         model_choice = (data.get("model") or "groq").lower()
         temperature = float(data.get("temperature", 0.3))
-        max_words = 300  # ✅ fixed predefined max length
+        max_words = 300
 
-        # ---------- Build context ----------
-        project_context = ""
+        # ---------- Get full project text ----------
+        project_text = ""
         if project_id is not None:
-            project = get_project_content(project_id)
-            if project:
-                title = project.get("title") or "Untitled"
-                content = (project.get("content") or "")[:3000]
-                project_context = f"Project Title: {title}\nContext:\n{content}\n"
-            else:
-                print(f"⚠️ No project found for ID {project_id}; proceeding without DB context.")
+            project_text = get_project_text(project_id)
+        else:
+            project_text = "No project context provided."
 
-        # ---------- Compose final prompt ----------
+        # ---------- Compose final AI prompt ----------
         full_prompt = (
-            f"Context:\n{project_context}\n\n"
+            f"Project data:\n{project_text}\n\n"
             "Instruction:\n"
-            "Analyze the context and answer accurately, clearly, and conversationally. "
-            "Keep replies polite, direct, and factual. If no valid question is found, "
-            "encourage the user to ask a clear one related to the data.\n\n"
-            f"Question:\n{prompt}"
+            "You are Stochify, an AI data assistant. Use the dataset above to answer questions, "
+            "analyze trends, or summarize findings. Be precise, factual, and concise.\n\n"
+            f"User question:\n{prompt}"
         )
 
         # ---------- Model Routing ----------
