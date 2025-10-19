@@ -14,6 +14,15 @@ from flask_dance.contrib.github import make_github_blueprint, github  # <- optio
 from ai_response import ai_bp
 from urllib.parse import quote
 
+from mimetypes import guess_type
+from charset_normalizer import from_bytes as detect_encoding  # already in your env via requests deps
+
+from flask import send_file
+from io import BytesIO
+
+ALLOWED_TEXT_EXT = {'.csv', '.json', '.txt'}
+ALLOWED_EXCEL_EXT = {'.xlsx', '.xls'}
+
 
 # =========================================
 # App & Config
@@ -65,6 +74,20 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     name = db.Column(db.String(100), nullable=True)
     picture = db.Column(db.String(255), nullable=True)
+
+class Asset(db.Model):
+    """Backs a Card with the original uploaded file or text."""
+    id = db.Column(db.Integer, primary_key=True)
+    card_id = db.Column(db.Integer, db.ForeignKey('card.id', ondelete="CASCADE"), index=True)
+    file_name = db.Column(db.String(255), nullable=True)
+    mime_type = db.Column(db.String(100), nullable=True)
+    encoding = db.Column(db.String(40), nullable=True)    # for text files
+    size_bytes = db.Column(db.Integer, nullable=True)
+    text_content = db.Column(db.Text, nullable=True)      # csv/json/txt stored as text
+    blob_content = db.Column(db.LargeBinary, nullable=True)  # excel or any binary
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    card = db.relationship('Card', backref=db.backref('assets', lazy=True))
 
 # =========================================
 # OAuth Blueprints
@@ -376,41 +399,108 @@ def register_user():
 
 @app.route("/api/projects", methods=["POST"])
 def create_project():
-    """Accept uploaded CSV/JSON text OR uploaded file, store as a Card."""
+    """
+    Accepts:
+      - JSON body: {title, content, [filename?, mimetype?]}
+      - multipart/form-data: fields: title, file
+    Stores:
+      - CSV/JSON/TXT as text_content (decoded)
+      - Excel as blob_content (raw bytes)
+    Also creates a Card row for the project.
+    """
     email, error, code = get_current_user()
     if not email:
         return error, code
 
-    # Check content type to handle both JSON and multipart/form-data
-    if request.content_type.startswith("application/json"):
+    title = None
+    file_obj = None
+    text_payload = None
+    filename = None
+    mimetype = None
+    encoding = None
+    size_bytes = None
+
+    ct = (request.content_type or "").lower()
+
+    if ct.startswith("application/json"):
         data = request.get_json(silent=True) or {}
-        title = data.get("title")
-        content = data.get("content")
+        title = (data.get("title") or "").strip()
+        text_payload = data.get("content")  # raw text (csv/json/txt)
+        filename = data.get("filename")
+        mimetype = data.get("mimetype") or (guess_type(filename or "")[0] if filename else None)
+        # assume UTF-8 for JSON body
+        encoding = "utf-8" if text_payload is not None else None
+        if text_payload is not None:
+            size_bytes = len(text_payload.encode("utf-8"))
     else:
-        title = request.form.get("title")
-        uploaded_file = request.files.get("file")
-        content = None
-        if uploaded_file:
-            try:
-                content = uploaded_file.read().decode("utf-8")
-            except UnicodeDecodeError:
-                return jsonify({"error": "File must be UTF-8 encoded"}), 400
+        title = (request.form.get("title") or "").strip()
+        file_obj = request.files.get("file")
+
+        if file_obj:
+            filename = file_obj.filename
+            mimetype = file_obj.mimetype or guess_type(filename or "")[0]
+            raw = file_obj.read()
+            size_bytes = len(raw)
+
+            # Choose by extension
+            ext = (os.path.splitext(filename or "")[1] or "").lower()
+
+            if ext in ALLOWED_TEXT_EXT:
+                # Try UTF-8 first; fallback to detected encoding
+                try:
+                    text_payload = raw.decode("utf-8")
+                    encoding = "utf-8"
+                except UnicodeDecodeError:
+                    probe = detect_encoding(raw).best()
+                    if not probe or not probe.encoding:
+                        return jsonify({"error": "Unable to detect text encoding; please upload UTF-8"}), 400
+                    encoding = probe.encoding
+                    text_payload = raw.decode(encoding, errors="replace")
+            elif ext in ALLOWED_EXCEL_EXT:
+                # Store as binary (don’t attempt to parse)
+                encoding = None
+                blob_bytes = raw
+            else:
+                return jsonify({"error": "Unsupported file type. Allowed: .csv, .json, .txt, .xlsx, .xls"}), 400
+        else:
+            return jsonify({"error": "Missing content or file"}), 400
 
     if not title:
         return jsonify({"error": "Missing project title"}), 400
-    if not content:
-        return jsonify({"error": "Missing content or file"}), 400
 
-    # ---- Save as Card ----
-    new_card = Card(email=email, title=title, content=content)
-    db.session.add(new_card)
+    # Create the Card (project)
+    card = Card(email=email, title=title, content=None)  # keep content optional/for notes
+    db.session.add(card)
+    db.session.flush()  # get card.id
+
+    # Create Asset depending on source
+    asset = Asset(
+        card_id=card.id,
+        file_name=filename,
+        mime_type=mimetype,
+        encoding=encoding,
+        size_bytes=size_bytes
+    )
+
+    if text_payload is not None:
+        asset.text_content = text_payload
+    else:
+        # binary (e.g., excel)
+        asset.blob_content = blob_bytes
+
+    db.session.add(asset)
     db.session.commit()
 
     return jsonify({
-        "message": "Project created successfully",
-        "id": new_card.id,
-        "title": new_card.title,
-        "created_at": new_card.created_at.isoformat(),
+        "message": "Project created",
+        "card_id": card.id,
+        "asset_id": asset.id,
+        "title": card.title,
+        "filename": asset.file_name,
+        "mimetype": asset.mime_type,
+        "encoding": asset.encoding,
+        "size_bytes": asset.size_bytes,
+        "created_at": card.created_at.isoformat(),
     }), 201
 
 @app.route("/api/login", methods=["POST"])
@@ -431,6 +521,29 @@ def login_user():
     }
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
     return jsonify({"token": token})
+
+@app.route("/api/projects/<int:card_id>/assets/<int:asset_id>/download", methods=["GET"])
+def download_asset(card_id, asset_id):
+    email, error, code = get_current_user()
+    if not email:
+        return error, code
+
+    asset = Asset.query.join(Card, Asset.card_id == Card.id)\
+        .filter(Asset.id == asset_id, Card.id == card_id, Card.email == email).first()
+    if not asset:
+        return jsonify({"error": "Not found"}), 404
+
+    filename = asset.file_name or f"asset-{asset.id}"
+    mime = asset.mime_type or "application/octet-stream"
+
+    if asset.blob_content:
+        return send_file(BytesIO(asset.blob_content), mimetype=mime,
+                         as_attachment=True, download_name=filename)
+
+    # text → send as bytes (UTF-8)
+    data = (asset.text_content or "").encode(asset.encoding or "utf-8", errors="replace")
+    return send_file(BytesIO(data), mimetype=mime or "text/plain; charset=utf-8",
+                     as_attachment=True, download_name=filename)
 
 # =========================================
 # Main
