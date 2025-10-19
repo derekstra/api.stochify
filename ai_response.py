@@ -71,7 +71,7 @@ def call_groq(full_prompt, temperature, max_words=300):
         return "Error calling Groq."
 
 def call_gemini(full_prompt, temperature=0.3, max_words=300):
-    """Send a chat request to Gemini 2.5 Pro (Google AI Studio v1beta)."""
+    """Send a chat request to Gemini 2.5 Flash-Lite (Google AI Studio v1beta)."""
     try:
         if not GEMINI_API_KEY:
             return "Gemini API key missing."
@@ -79,7 +79,7 @@ def call_gemini(full_prompt, temperature=0.3, max_words=300):
         # === Correct model & endpoint ===
         gemini_url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.5-pro:generateContent?key={GEMINI_API_KEY}"
+            f"gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
         )
 
         # === Request payload ===
@@ -91,7 +91,7 @@ def call_gemini(full_prompt, temperature=0.3, max_words=300):
             ],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_words * 2,  # Safe limit
+                "maxOutputTokens": max_words * 2,  # Safe limit (~600 tokens)
                 "topP": 0.95,
                 "topK": 64,
             },
@@ -107,13 +107,13 @@ def call_gemini(full_prompt, temperature=0.3, max_words=300):
 
         # === Error handling ===
         if resp.status_code != 200:
-            print("❌ Gemini API error:", resp.status_code, resp.text)
-            return f"Gemini API request failed ({resp.status_code})."
+            print("❌ Gemini Flash-Lite API error:", resp.status_code, resp.text)
+            return f"Gemini Flash-Lite API request failed ({resp.status_code})."
 
         j = resp.json()
 
         # === Extract model reply ===
-        return (
+        text = (
             j.get("candidates", [{}])[0]
             .get("content", {})
             .get("parts", [{}])[0]
@@ -121,9 +121,16 @@ def call_gemini(full_prompt, temperature=0.3, max_words=300):
             .strip()
         )
 
+        # === Fallback if empty (edge case)
+        if not text:
+            print("⚠️ Empty response from Gemini Flash-Lite:", j)
+            return "No response from Gemini Flash-Lite."
+
+        return text
+
     except Exception as e:
-        print("❌ Exception in call_gemini:", e)
-        return "Error calling Gemini 2.5 Pro."
+        print("❌ Exception in call_gemini Flash-Lite:", e)
+        return "Error calling Gemini 2.5 Flash-Lite."
     
 # ---------- Main Route ----------
 
