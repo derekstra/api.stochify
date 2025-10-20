@@ -293,18 +293,31 @@ def get_cards():
         return error, code
 
     cards = Card.query.filter_by(email=email).order_by(Card.created_at.desc()).all()
-    return jsonify(
-        [
-            {
-                "id": c.id,
-                "title": c.title,
-                "content": c.content,
-                "created_at": c.created_at.isoformat(),
-                "updated_at": c.updated_at.isoformat(),
-            }
-            for c in cards
-        ]
-    )
+    result = []
+
+    for c in cards:
+        # Find the latest asset linked to this card
+        asset = (
+            Asset.query.filter_by(card_id=c.id)
+            .order_by(Asset.created_at.desc())
+            .first()
+        )
+
+        text_preview = None
+        if asset and asset.text_content:
+            # limit preview size to keep response light
+            text_preview = asset.text_content[:500]
+
+        result.append({
+            "id": c.id,
+            "title": c.title,
+            "content": c.content,  # still keep for notes or manual projects
+            "preview": text_preview,  # <-- 🔥 text version for your card
+            "created_at": c.created_at.isoformat(),
+            "updated_at": c.updated_at.isoformat(),
+        })
+
+    return jsonify(result)
 
 @app.route("/api/cards/<int:card_id>", methods=["GET"])
 def get_card(card_id):
