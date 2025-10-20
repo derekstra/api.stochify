@@ -3,6 +3,7 @@ import io
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, quote
 from mimetypes import guess_type
+from io import BytesIO
 
 import jwt
 import pandas as pd
