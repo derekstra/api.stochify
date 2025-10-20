@@ -520,38 +520,54 @@ def create_project():
         asset.blob_content = text_payload.encode(encoding or "utf-8")
 
     elif blob_bytes:
-        # ✅ Excel or other binary files
         asset.blob_content = blob_bytes
-
-        # Always attempt to create a readable text version
         text_version = ""
+
         try:
             excel_buf = io.BytesIO(blob_bytes)
             sheets = pd.read_excel(excel_buf, sheet_name=None, engine="openpyxl")
 
             text_parts = []
             for sheet_name, df in sheets.items():
-                text_parts.append(f"--- Sheet: {sheet_name} ---\n")
-                # Limit rows to avoid massive output
-                preview_df = df.head(50)
-                text_parts.append(preview_df.to_csv(index=False))
-                text_parts.append("\n\n")
+                # 🧹 Clean the sheet
+                df = df.dropna(how="all").dropna(axis=1, how="all")  # drop empty rows/columns
 
-            text_version = "".join(text_parts)
+                # 🧾 Remove unnamed placeholder headers
+                df.columns = [
+                    (str(c).strip() if not str(c).startswith("Unnamed") else "")
+                    for c in df.columns
+                ]
+
+                # 🪶 Keep only rows that have any non-empty cell
+                df = df.loc[df.astype(str).apply(lambda row: row.str.strip().ne("").any(), axis=1)]
+
+                # 🧱 Convert cleaned data to Markdown table (pretty for humans + AI)
+                if not df.empty:
+                    text_parts.append(f"--- Sheet: {sheet_name} ---\n")
+                    text_parts.append(df.to_markdown(index=False))
+                    text_parts.append("\n\n")
+                else:
+                    text_parts.append(f"--- Sheet: {sheet_name} (empty) ---\n\n")
+
+            text_version = "".join(text_parts).strip()
+
+            if text_version:
+                asset.text_content = text_version
+                asset.encoding = "utf-8"
+                asset.size_bytes = len(text_version.encode("utf-8"))
+                print(f"✅ Clean Excel text extracted ({len(text_version)} chars)")
+            else:
+                print("⚠️ Excel file had no readable data")
+
         except Exception as e:
-            print(f"[Excel preview warning] Could not parse Excel with pandas: {e}")
+            print(f"⚠️ Excel parsing failed: {e}")
+            # fallback: partial decode if needed
             try:
-                # Fallback: basic binary-to-text dump of the first few KB
                 decoded = blob_bytes[:8192].decode("utf-8", errors="ignore")
-                text_version = "--- Raw Excel bytes preview (partial) ---\n" + decoded
+                asset.text_content = decoded
+                asset.encoding = "utf-8"
             except Exception as e2:
-                print(f"[Excel fallback failed] {e2}")
-                text_version = ""
-
-        if text_version:
-            asset.text_content = text_version
-            asset.encoding = "utf-8"
-            asset.size_bytes = len(text_version.encode("utf-8"))
+                print(f"⚠️ Excel fallback failed: {e2}")
 
     db.session.add(asset)
     db.session.commit()
