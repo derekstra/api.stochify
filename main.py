@@ -610,6 +610,24 @@ def download_asset(card_id, asset_id):
     return send_file(BytesIO(data), mimetype=mime or "text/plain; charset=utf-8",
                      as_attachment=True, download_name=filename)
 
+@app.route("/debug/excel_text/<int:card_id>")
+def debug_excel_text(card_id):
+    asset = (
+        Asset.query.filter_by(card_id=card_id)
+        .order_by(Asset.created_at.desc())
+        .first()
+    )
+    if not asset:
+        return jsonify({"error": "No asset found"}), 404
+
+    return jsonify({
+        "file_name": asset.file_name,
+        "mime_type": asset.mime_type,
+        "has_text_content": bool(asset.text_content),
+        "text_preview": asset.text_content[:500] if asset.text_content else None,
+    })
+
+
 # =========================================
 # Main
 # =========================================
