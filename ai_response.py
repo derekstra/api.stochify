@@ -79,7 +79,7 @@ def get_project_text(card_id: int):
 
 # ---------- Model Handlers ----------
 
-def call_groq(full_prompt, temperature, max_words=300):
+def call_groq(full_prompt, temperature, max_words=1000):
     """Send a chat request to Groq."""
     try:
         groq_payload = {
@@ -116,7 +116,7 @@ def call_groq(full_prompt, temperature, max_words=300):
         return "Error calling Groq."
 
 
-def call_gemini(full_prompt, temperature=0.3, max_words=300):
+def call_gemini(full_prompt, temperature=0.3, max_words=1000):
     """Send a chat request to Gemini 2.5 Flash-Lite."""
     try:
         if not GEMINI_API_KEY:
@@ -188,7 +188,7 @@ def ai_response():
         project_id = data.get("project_id")
         model_choice = (data.get("model") or "groq").lower()
         temperature = float(data.get("temperature", 0.3))
-        max_words = 300
+        max_words = 1000
 
         # ---------- Get full project text ----------
         project_text = ""
