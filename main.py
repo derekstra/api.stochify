@@ -529,23 +529,25 @@ def create_project():
 
             text_parts = []
             for sheet_name, df in sheets.items():
-                # 🧹 Clean the sheet
-                df = df.dropna(how="all").dropna(axis=1, how="all")  # drop empty rows/columns
+                # 🧹 1. Drop empty rows and columns
+                df = df.dropna(how="all").dropna(axis=1, how="all")
 
-                # 🧾 Remove unnamed placeholder headers
+                # 🧾 2. Remove ugly 'Unnamed' columns from Excel headers
                 df.columns = [
-                    (str(c).strip() if not str(c).startswith("Unnamed") else "")
+                    c if not str(c).startswith("Unnamed") else ""
                     for c in df.columns
                 ]
 
-                # 🪶 Keep only rows that have any non-empty cell
-                df = df.loc[df.astype(str).apply(lambda row: row.str.strip().ne("").any(), axis=1)]
+                # 🪶 3. Keep only non-empty rows
+                df = df.loc[
+                    df.astype(str).apply(lambda row: row.str.strip().ne("").any(), axis=1)
+                ]
 
-                # 🧱 Convert cleaned data to Markdown table (pretty for humans + AI)
+                # 🧱 4. Convert to lightweight CSV text
                 if not df.empty:
                     text_parts.append(f"--- Sheet: {sheet_name} ---\n")
-                    text_parts.append(df.to_markdown(index=False))
-                    text_parts.append("\n\n")
+                    text_parts.append(df.to_csv(index=False))
+                    text_parts.append("\n")
                 else:
                     text_parts.append(f"--- Sheet: {sheet_name} (empty) ---\n\n")
 
@@ -555,19 +557,20 @@ def create_project():
                 asset.text_content = text_version
                 asset.encoding = "utf-8"
                 asset.size_bytes = len(text_version.encode("utf-8"))
-                print(f"✅ Clean Excel text extracted ({len(text_version)} chars)")
+                print(f"✅ Extracted clean CSV text ({len(text_version)} chars)")
             else:
-                print("⚠️ Excel file had no readable data")
+                print("⚠️ Excel file had no usable text content")
 
         except Exception as e:
             print(f"⚠️ Excel parsing failed: {e}")
-            # fallback: partial decode if needed
+            # fallback to partial byte decode if needed
             try:
                 decoded = blob_bytes[:8192].decode("utf-8", errors="ignore")
                 asset.text_content = decoded
                 asset.encoding = "utf-8"
             except Exception as e2:
                 print(f"⚠️ Excel fallback failed: {e2}")
+
 
     db.session.add(asset)
     db.session.commit()
