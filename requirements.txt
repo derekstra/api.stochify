@@ -11,4 +11,5 @@ PyJWT
 pandas>=2.2.3
 openpyxl
 tabulate
+plotly>=5.22.0
 
