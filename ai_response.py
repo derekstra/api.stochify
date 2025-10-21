@@ -221,3 +221,65 @@ def ai_response():
         print("❌ Server error in /airesponse:", e)
         traceback.print_exc()
         return jsonify({"error": "Internal server error"}), 500
+    
+@ai_bp.route("/ai/viz", methods=["POST"])
+def ai_visualization():
+    """
+    Generates a visualization instruction JSON from a user's text prompt
+    and a preview of the project's dataset.
+    """
+    try:
+        data = request.get_json()
+        prompt = data.get("prompt", "")
+        project_id = data.get("project_id")
+        temperature = float(data.get("temperature", 0.3))
+        model = data.get("model", "gemini")
+
+        # === Step 1: Load top rows of dataset ===
+        from utils import load_project_dataframe
+        df = load_project_dataframe(project_id)
+        csv_preview = df.head(20).to_csv(index=False)
+
+        # === Step 2: Specialized visualization prompt ===
+        full_prompt = f"""
+        You are Stochify's visualization planner.
+
+        User request:
+        "{prompt}"
+
+        Here's a preview of the dataset:
+        {csv_preview}
+
+        Based on the data and the request, return ONLY a JSON object describing
+        what visualization to make. Use this schema:
+        {{
+          "chartType": "scatter" | "bar" | "line" | "box",
+          "x": "column_name",
+          "y": "column_name",
+          "color": "optional_column_name",
+          "summary": "brief summary of what this chart shows"
+        }}
+        Do NOT include extra text. Only output valid JSON.
+        """
+
+        # === Step 3: Call existing model helper ===
+        from ai_response import call_gemini, call_groq  # assuming you have these already
+
+        if model == "gemini":
+            ai_text = call_gemini(full_prompt, temperature)
+        elif model == "groq":
+            ai_text = call_groq(full_prompt, temperature)
+        else:
+            return jsonify({"error": "Unsupported model"}), 400
+
+        # === Step 4: Try parsing JSON ===
+        import json
+        try:
+            parsed = json.loads(ai_text)
+            return jsonify(parsed)
+        except Exception:
+            return jsonify({"error": "Invalid JSON from AI", "raw": ai_text})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+

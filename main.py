@@ -22,6 +22,7 @@ from flask_dance.contrib.github import make_github_blueprint, github  # Optional
 # Local Blueprints
 from ai_response import ai_bp
 
+from visualizations import visualizations_bp
 
 ALLOWED_TEXT_EXT = {'.csv', '.json', '.txt'}
 ALLOWED_EXCEL_EXT = {'.xlsx', '.xls'}
@@ -32,6 +33,7 @@ ALLOWED_EXCEL_EXT = {'.xlsx', '.xls'}
 # =========================================
 app = Flask(__name__)
 app.register_blueprint(ai_bp)
+app.register_blueprint(visualizations_bp)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
 CORS(app, resources={
     r"/*": {
